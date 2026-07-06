@@ -1,5 +1,6 @@
 import os
 import time
+import json
 from pathlib import Path
 
 # Fix 1 & 2: Import the actual function names defined in your modules
@@ -14,6 +15,7 @@ def main():
     # 1. Configuration
     # Convert DATA_PATH to a Path object, which parser.py requires
     DATA_PATH = Path(os.path.join("data", "CUAD_v1.json"))
+    OUTPUT_CHUNKS_PATH = Path(os.path.join("data", "processed_chunks.json"))
     MAX_CONTRACTS = 200 
     
     print("Initializing Phase 1 Pipeline...")
@@ -38,6 +40,12 @@ def main():
         
     chunked_corpus = chunk_contracts(parsed_documents)
     print(f"   Generated {len(chunked_corpus)} total document chunks.")
+
+    # NEW: Save the chunks for Phase 2 and Phase 3
+    print(f"➔ Saving chunks to {OUTPUT_CHUNKS_PATH}...")
+    OUTPUT_CHUNKS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with open(OUTPUT_CHUNKS_PATH, "w", encoding="utf-8") as f:
+        json.dump(chunked_corpus, f, indent=2)
 
     # 4. Lexical Retrieval Engine Initialization
     print("➔ Building the exact-match retrieval engine index...")

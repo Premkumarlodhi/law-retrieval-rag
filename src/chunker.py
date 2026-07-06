@@ -16,7 +16,9 @@ Output:
     [
         {
             "title": "...",
-            "chunk_id": 0,
+            "raw_title": "...",
+            "contract_type": "...",
+            "chunk_id": "...",
             "text": "Title: Master Service Agreement\n\n<chunk>"
         },
         ...
@@ -44,87 +46,15 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 # Custom Stop Words
 # =============================================================================
 
-# Only remove obvious filler words.
-# IMPORTANT:
-# Do NOT include legally significant words such as:
-# not, no, never, except, unless, if, shall, may, must, etc.
-
 CUSTOM_STOPWORDS = {
-    "a",
-    "an",
-    "the",
-    "this",
-    "that",
-    "these",
-    "those",
-    "is",
-    "are",
-    "was",
-    "were",
-    "be",
-    "been",
-    "being",
-    "am",
-    "to",
-    "of",
-    "and",
-    "or",
-    "as",
-    "at",
-    "by",
-    "for",
-    "from",
-    "in",
-    "into",
-    "on",
-    "onto",
-    "with",
-    "about",
-    "over",
-    "under",
-    "up",
-    "down",
-    "through",
-    "during",
-    "after",
-    "before",
-    "between",
-    "among",
-    "it",
-    "its",
-    "they",
-    "them",
-    "their",
-    "he",
-    "she",
-    "his",
-    "her",
-    "you",
-    "your",
-    "yours",
-    "we",
-    "our",
-    "ours",
-    "i",
-    "me",
-    "my",
-    "mine",
-    "can",
-    "could",
-    "would",
-    "should",
-    "very",
-    "also",
-    "just",
-    "than",
-    "then",
-    "there",
-    "here",
-    "such",
-    "some",
-    "any",
-    "each",
-    "every",
+    "a", "an", "the", "this", "that", "these", "those", "is", "are", "was",
+    "were", "be", "been", "being", "am", "to", "of", "and", "or", "as", "at",
+    "by", "for", "from", "in", "into", "on", "onto", "with", "about", "over",
+    "under", "up", "down", "through", "during", "after", "before", "between",
+    "among", "it", "its", "they", "them", "their", "he", "she", "his", "her",
+    "you", "your", "yours", "we", "our", "ours", "i", "me", "my", "mine",
+    "can", "could", "would", "should", "very", "also", "just", "than", "then",
+    "there", "here", "such", "some", "any", "each", "every",
 }
 
 
@@ -133,29 +63,10 @@ CUSTOM_STOPWORDS = {
 # =============================================================================
 
 LEGAL_PRESERVE = {
-    "not",
-    "no",
-    "nor",
-    "never",
-    "except",
-    "unless",
-    "shall",
-    "must",
-    "may",
-    "will",
-    "if",
-    "provided",
-    "provided that",
-    "subject",
-    "subject to",
-    "only",
-    "without",
-    "including",
-    "excluding",
-    "whether",
-    "where",
-    "whereas",
-    "upon",
+    "not", "no", "nor", "never", "except", "unless", "shall", "must", "may",
+    "will", "if", "provided", "provided that", "subject", "subject to",
+    "only", "without", "including", "excluding", "whether", "where",
+    "whereas", "upon",
 }
 
 
@@ -166,42 +77,27 @@ LEGAL_PRESERVE = {
 def clean_text(text: str) -> str:
     """
     Cleans contract text while preserving legal meaning.
-
-    Steps:
-        1. Normalize whitespace
-        2. Remove URLs
-        3. Remove non-printable chars
-        4. Remove filler stop words
-        5. Preserve legally important modifiers
     """
-
     if not text:
         return ""
 
     # Remove URLs
     text = re.sub(r"http\S+|www\S+", " ", text)
-
     # Remove non-printable characters
     text = re.sub(r"[\x00-\x1F\x7F]", " ", text)
-
     # Normalize whitespace
     text = re.sub(r"\s+", " ", text).strip()
-
     # Tokenization
     tokens = re.findall(r"\b[\w'-]+\b", text)
 
     cleaned = []
-
     for token in tokens:
         lower = token.lower()
-
         if lower in LEGAL_PRESERVE:
             cleaned.append(token)
             continue
-
         if lower in CUSTOM_STOPWORDS:
             continue
-
         cleaned.append(token)
 
     return " ".join(cleaned)
@@ -214,15 +110,7 @@ def clean_text(text: str) -> str:
 splitter = RecursiveCharacterTextSplitter(
     chunk_size=800,
     chunk_overlap=100,
-    separators=[
-        "\n\n",
-        "\n",
-        ". ",
-        "; ",
-        ", ",
-        " ",
-        "",
-    ],
+    separators=["\n\n", "\n", ". ", "; ", ", ", " ", ""],
 )
 
 
@@ -236,37 +124,31 @@ def chunk_contracts(contract_list: List[Dict]) -> List[Dict]:
     ----------
     contract_list : List[Dict]
 
-    Expected format:
-
-        {
-            "title": "...",
-            "text": "..."
-        }
-
     Returns
     -------
     List[Dict]
     """
-
     all_chunks = []
 
     for document in contract_list:
-
         title = document.get("title", "Untitled Document")
         text = document.get("text", "")
+        # Grab the extra metadata from the parser
+        contract_type = document.get("contract_type", "Unknown") 
+        raw_title = document.get("raw_title", title)
 
         cleaned_text = clean_text(text)
-
         chunks = splitter.split_text(cleaned_text)
 
         for idx, chunk in enumerate(chunks):
-
             final_chunk = f"Title: {title}\n\n{chunk}"
 
             all_chunks.append(
                 {
                     "title": title,
-                    "chunk_id": idx,
+                    "raw_title": raw_title,
+                    "contract_type": contract_type,
+                    "chunk_id": f"{raw_title}_chunk_{idx}",
                     "text": final_chunk,
                 }
             )
@@ -279,19 +161,15 @@ def chunk_contracts(contract_list: List[Dict]) -> List[Dict]:
 # =============================================================================
 
 if __name__ == "__main__":
-
     contracts = [
         {
             "title": "Employment Agreement",
             "text": """
             This Agreement is made between the Company and the Employee.
-
             The Employee shall not disclose confidential information
             unless required by law.
-
             The Company may terminate employment if the Employee
             breaches any confidentiality obligation.
-
             Except where otherwise required, all notices shall be
             delivered in writing.
             """,
@@ -299,7 +177,6 @@ if __name__ == "__main__":
     ]
 
     chunks = chunk_contracts(contracts)
-
     for chunk in chunks:
         print("=" * 80)
         print(chunk["text"])

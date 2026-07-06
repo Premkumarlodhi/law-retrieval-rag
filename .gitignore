@@ -1,12 +1,63 @@
-# Environments
+# ==========================================
+# Environments & Secrets
+# ==========================================
 env/
 venv/
 .env
+.venv
+Pipfile.lock
 
-# Data and Models
+# ==========================================
+# Data & Databases
+# ==========================================
 data/
-*.json
+chroma_db/
+*.sqlite3
+*.db
 
-# Python Cache
+# Note: If you have configuration JSONs you DO want to track, 
+# remove `*.json` and strictly ignore the data folder using `data/` instead.
+*.json 
+
+# ==========================================
+# Machine Learning & Models
+# ==========================================
+*.joblib
+*.pkl
+*.h5
+*.pt
+*.safetensors
+.huggingface/
+hf_cache/
+
+# ==========================================
+# Python Cache & Build Artifacts
+# ==========================================
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
+*.so
+build/
+dist/
+*.egg-info/
+.pytest_cache/
+
+# ==========================================
+# Logs & Outputs
+# ==========================================
+*.log
+logs/
+
+# ==========================================
+# Jupyter Notebooks
+# ==========================================
+.ipynb_checkpoints/
+
+# ==========================================
+# OS & IDE Files
+# ==========================================
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
