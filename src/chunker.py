@@ -118,6 +118,9 @@ splitter = RecursiveCharacterTextSplitter(
 # Chunk Contracts
 # =============================================================================
 
+from src.utils.document_schema import create_document
+
+
 def chunk_contracts(contract_list: List[Dict]) -> List[Dict]:
     """
     Parameters
@@ -128,29 +131,78 @@ def chunk_contracts(contract_list: List[Dict]) -> List[Dict]:
     -------
     List[Dict]
     """
+
     all_chunks = []
 
     for document in contract_list:
-        title = document.get("title", "Untitled Document")
-        text = document.get("text", "")
-        # Grab the extra metadata from the parser
-        contract_type = document.get("contract_type", "Unknown") 
-        raw_title = document.get("raw_title", title)
+
+        title = document.get(
+            "title",
+            "Untitled Document"
+        )
+
+        text = document.get(
+            "text",
+            ""
+        )
+
+        contract_type = document.get(
+            "contract_type",
+            "Unknown"
+        )
+
+        raw_title = document.get(
+            "raw_title",
+            title
+        )
 
         cleaned_text = clean_text(text)
-        chunks = splitter.split_text(cleaned_text)
+
+        chunks = splitter.split_text(
+            cleaned_text
+        )
+
+        metadata = {
+            "title": title,
+            "raw_title": raw_title,
+            "contract_type": contract_type,
+
+            # placeholders for future KG extraction
+            "party_1":
+                document.get(
+                    "party_1",
+                    ""
+                ),
+
+            "party_2":
+                document.get(
+                    "party_2",
+                    ""
+                ),
+
+            "date":
+                document.get(
+                    "date",
+                    ""
+                ),
+        }
 
         for idx, chunk in enumerate(chunks):
-            final_chunk = f"Title: {title}\n\n{chunk}"
+
+            final_chunk = (
+                f"Title: {title}\n\n"
+                f"{chunk}"
+            )
+
+            chunk_document = create_document(
+                text=final_chunk,
+                metadata=metadata,
+                chunk_index=idx,
+                section="contract_body",
+            )
 
             all_chunks.append(
-                {
-                    "title": title,
-                    "raw_title": raw_title,
-                    "contract_type": contract_type,
-                    "chunk_id": f"{raw_title}_chunk_{idx}",
-                    "text": final_chunk,
-                }
+                chunk_document
             )
 
     return all_chunks

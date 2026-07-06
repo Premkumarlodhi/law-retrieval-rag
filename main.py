@@ -3,73 +3,253 @@ import time
 import json
 from pathlib import Path
 
-# Fix 1 & 2: Import the actual function names defined in your modules
 from src.parser import parse_cuad
 from src.chunker import chunk_contracts
 from src.retriever import BM25Retriever
 
+from evaluation.test_queries import TEST_QUERIES
+from evaluation.retrieval_eval import (
+    hit_rate,
+    recall_at_k,
+    reciprocal_rank,
+)
+
+
 def main():
     """
-    Executes Phase 1: Data Preparation and Lexical Retrieval pipeline.
+    Executes Phase 1:
+    Data Preparation + Lexical Retrieval Pipeline
     """
-    # 1. Configuration
-    # Convert DATA_PATH to a Path object, which parser.py requires
-    DATA_PATH = Path(os.path.join("data", "CUAD_v1.json"))
-    OUTPUT_CHUNKS_PATH = Path(os.path.join("data", "processed_chunks.json"))
-    MAX_CONTRACTS = 200 
-    
+
+    # ============================================================
+    # Configuration
+    # ============================================================
+
+    DATA_PATH = Path("data") / "CUAD_v1.json"
+    OUTPUT_CHUNKS_PATH = Path("data") / "processed_chunks.json"
+
+    MAX_CONTRACTS = 200
+
     print("Initializing Phase 1 Pipeline...")
     start_time = time.time()
 
-    # 2. Ingestion & Parsing
+    # ============================================================
+    # Parsing
+    # ============================================================
+
     print(f"➔ Parsing the top {MAX_CONTRACTS} contracts from {DATA_PATH}...")
+
     try:
-        # Fix 1: Use parse_cuad and map to its correct argument names
-        parsed_documents = parse_cuad(input_path=DATA_PATH, n_contracts=MAX_CONTRACTS)
+        parsed_documents = parse_cuad(
+            input_path=DATA_PATH,
+            n_contracts=MAX_CONTRACTS,
+        )
+
     except FileNotFoundError:
-        print(f"Error: Could not find dataset at {DATA_PATH}. Please ensure it is downloaded.")
+
+        print(
+            f"Error: Could not find dataset at {DATA_PATH}."
+        )
+
         return
 
-    # 3. Preprocessing & Chunking
-    print("➔ Applying text cleaning, custom stop-word removal, and paragraph chunking...")
-    
-    # Fix 2: parser.py outputs 'raw_title', but chunker.py expects 'title'. 
-    # We bridge that gap here before passing the data forward.
+    # ============================================================
+    # Bridge parser -> chunker
+    # ============================================================
+
     for doc in parsed_documents:
-        doc["title"] = doc.get("raw_title", "Untitled Document")
-        
-    chunked_corpus = chunk_contracts(parsed_documents)
-    print(f"   Generated {len(chunked_corpus)} total document chunks.")
 
-    # NEW: Save the chunks for Phase 2 and Phase 3
-    print(f"➔ Saving chunks to {OUTPUT_CHUNKS_PATH}...")
-    OUTPUT_CHUNKS_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with open(OUTPUT_CHUNKS_PATH, "w", encoding="utf-8") as f:
-        json.dump(chunked_corpus, f, indent=2)
+        doc["title"] = doc.get(
+            "raw_title",
+            "Untitled Document",
+        )
 
-    # 4. Lexical Retrieval Engine Initialization
-    print("➔ Building the exact-match retrieval engine index...")
-    
-    # Fix 3: Extract just the 'text' fields, as BM25Retriever expects a List[str]
-    corpus_texts = [chunk["text"] for chunk in chunked_corpus]
-    retriever = BM25Retriever(corpus_texts)
+    # ============================================================
+    # Chunking
+    # ============================================================
 
-    # 5. Pipeline Testing
+    print(
+        "➔ Applying text cleaning, custom stop-word removal, and paragraph chunking..."
+    )
+
+    chunked_corpus = chunk_contracts(
+        parsed_documents
+    )
+
+    print(
+        f"   Generated {len(chunked_corpus)} total document chunks."
+    )
+
+    # ============================================================
+    # Save processed chunks
+    # ============================================================
+
+    print(
+        f"➔ Saving chunks to {OUTPUT_CHUNKS_PATH}..."
+    )
+
+    OUTPUT_CHUNKS_PATH.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    with open(
+        OUTPUT_CHUNKS_PATH,
+        "w",
+        encoding="utf-8",
+    ) as f:
+
+        json.dump(
+            chunked_corpus,
+            f,
+            indent=2,
+            ensure_ascii=False,
+        )
+
+    # ============================================================
+    # Build BM25 Index
+    # ============================================================
+
+    print(
+        "➔ Building the exact-match retrieval engine index..."
+    )
+
+    retriever = BM25Retriever(
+        chunked_corpus
+    )
+
+    # ============================================================
+    # Demo Query
+    # ============================================================
+
     test_query = "force majeure or act of god"
-    print(f"\n➔ Executing Test Query: '{test_query}'")
-    
-    # Retriever returns a List[str] of the best chunks
-    results = retriever.search(query=test_query, top_k=5)
 
-    print("\n--- Top 5 Lexical Retrieval Results ---")
-    for idx, result_text in enumerate(results, 1):
-        print(f"\n[Result {idx}]")
-        # Since chunker.py automatically prepends "Title: [Name]" to the text,
-        # we can just print the string excerpt directly without needing a separate metadata field.
-        print(f"Excerpt: {result_text[:250]}...")
+    print(
+        f"\n➔ Executing Test Query: '{test_query}'"
+    )
 
-    elapsed_time = time.time() - start_time
-    print(f"\nPipeline execution completed in {elapsed_time:.2f} seconds.")
+    results = retriever.search(
+        query=test_query,
+        top_k=5,
+    )
+
+    # ============================================================
+    # Display Results
+    # ============================================================
+
+    print(
+        "\n--- Top 5 Lexical Retrieval Results ---"
+    )
+
+    for i, result in enumerate(results, 1):
+
+        print("\n" + "=" * 80)
+
+        print(f"[Result {i}]")
+
+        print(f"Score          : {result['score']:.4f}")
+
+        print(f"Chunk ID       : {result['chunk_id']}")
+
+        print(f"Contract Type  : {result['contract_type']}")
+
+        print(f"Title          : {result['title']}")
+
+        print("\nExcerpt:\n")
+
+        print(result["text"][:350] + "...")
+
+    # ============================================================
+    # Retrieval Evaluation
+    # ============================================================
+
+    print("\n")
+    print("=" * 80)
+    print("Running Retrieval Evaluation")
+    print("=" * 80)
+
+    avg_hit = 0
+    avg_recall = 0
+    avg_mrr = 0
+
+    for test in TEST_QUERIES:
+
+        results = retriever.search(
+            query=test["query"],
+            top_k=5,
+        )
+
+        retrieved_docs = [
+            r["text"]
+            for r in results
+        ]
+
+        hit = hit_rate(
+            retrieved_docs,
+            test["expected"],
+        )
+
+        recall = recall_at_k(
+            retrieved_docs,
+            test["expected"],
+        )
+
+        rr = reciprocal_rank(
+            retrieved_docs,
+            test["expected"],
+        )
+
+        avg_hit += hit
+        avg_recall += recall
+        avg_mrr += rr
+
+        print("\n" + "-" * 60)
+
+        print(f"Query      : {test['query']}")
+
+        print(f"Hit@5      : {hit}")
+
+        print(f"Recall@5   : {recall:.2f}")
+
+        print(f"MRR        : {rr:.2f}")
+
+    total_queries = len(TEST_QUERIES)
+
+    print("\n")
+    print("=" * 80)
+
+    print(
+        f"Average Hit@5      : {avg_hit / total_queries:.3f}"
+    )
+
+    print(
+        f"Average Recall@5   : {avg_recall / total_queries:.3f}"
+    )
+
+    print(
+        f"Average MRR        : {avg_mrr / total_queries:.3f}"
+    )
+
+    # ============================================================
+    # Summary
+    # ============================================================
+
+    elapsed = time.time() - start_time
+
+    print("\n" + "=" * 80)
+
+    print(
+        f"Pipeline execution completed in {elapsed:.2f} seconds."
+    )
+
+    print(
+        f"Indexed Documents : {len(parsed_documents)}"
+    )
+
+    print(
+        f"Indexed Chunks    : {len(chunked_corpus)}"
+    )
+
 
 if __name__ == "__main__":
     main()
