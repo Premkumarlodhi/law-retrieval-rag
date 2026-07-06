@@ -61,3 +61,7 @@ Thumbs.db
 .vscode/
 .idea/
 *.swp
+
+__pycache__/
+*.pyc
+vector_store/chroma_db/
