@@ -4,7 +4,8 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
-
+from src import cross_encoder
+from src.cross_encoder import CrossEncoderReranker
 from evaluation.retrieval_eval import hit_rate, reciprocal_rank, recall_at_k
 from evaluation.test_queries import TEST_QUERIES
 from src.chunker import chunk_contracts
@@ -37,7 +38,7 @@ class RetrievalPipeline:
         self.bm25_retriever: Optional[BM25Retriever] = None
         self.semantic_retriever: Optional[SemanticRetriever] = None
         self.hybrid_retriever: Optional[HybridRetriever] = None
-
+        self.cross_encoder: Optional[CrossEncoderReranker] = None
     def run(self) -> Dict[str, Any]:
         start_time = time.time()
         logger.info("Initializing retrieval pipeline...")
@@ -47,9 +48,12 @@ class RetrievalPipeline:
         chunked_corpus = self._chunk_stage(prepared_documents)
         self._persist_chunks_stage(chunked_corpus)
 
-        self.bm25_retriever, self.semantic_retriever, self.hybrid_retriever = (
-            self._build_retrieval_stage(chunked_corpus)
-        )
+        (
+            self.bm25_retriever,
+            self.semantic_retriever,
+            self.hybrid_retriever,
+            self.cross_encoder,
+        ) = self._build_retrieval_stage(chunked_corpus)
 
         self._demo_query_stage(self.config.demo_query, self.config.top_k)
         evaluation_metrics = self._evaluate_stage(self.config.eval_top_k)
@@ -121,7 +125,7 @@ class RetrievalPipeline:
     def _build_retrieval_stage(
         self,
         chunked_corpus: List[Dict[str, Any]],
-    ) -> Tuple[BM25Retriever, SemanticRetriever, HybridRetriever]:
+    ) -> Tuple[BM25Retriever, SemanticRetriever, HybridRetriever, CrossEncoderReranker]:
         logger.info("Building lexical retrieval engine...")
         bm25_retriever = BM25Retriever(chunked_corpus)
 
@@ -134,14 +138,34 @@ class RetrievalPipeline:
             bm25=bm25_retriever,
             semantic=semantic_retriever,
         )
-        return bm25_retriever, semantic_retriever, hybrid_retriever
+        logger.info("Loading Cross Encoder...")
+
+        cross_encoder = CrossEncoderReranker()
+        cross_encoder.initialize()
+
+        return (
+        bm25_retriever,
+        semantic_retriever,
+        hybrid_retriever,
+        cross_encoder,
+        )
 
     def _demo_query_stage(self, query: str, top_k: int) -> None:
         logger.info("Executing demo query: %s", query)
         if self.hybrid_retriever is None:
             raise RuntimeError("Hybrid retriever has not been initialized.")
 
-        results = self.hybrid_retriever.search(query=query, top_k=top_k)
+        hybrid_results = self.hybrid_retriever.search(
+        query=query,
+        top_k=max(top_k * 4, 20),
+        )
+
+        results = self.cross_encoder.rerank(
+        query=query,
+        candidates=hybrid_results,
+        top_k=top_k,
+        debug=True,
+        )
         self._print_results(results, title="Hybrid Retrieval Results")
 
     def _evaluate_stage(self, top_k: int) -> Dict[str, float]:
@@ -154,9 +178,15 @@ class RetrievalPipeline:
         avg_mrr = 0.0
 
         for test_case in TEST_QUERIES:
-            results = self.hybrid_retriever.search(
-                query=test_case["query"],
-                top_k=top_k,
+            hybrid_results = self.hybrid_retriever.search(
+            query=test_case["query"],
+            top_k=max(top_k * 4, 20),
+            )
+
+            results = self.cross_encoder.rerank(
+            query=test_case["query"],
+            candidates=hybrid_results,
+            top_k=top_k,
             )
             retrieved_docs = [result["text"] for result in results]
 
