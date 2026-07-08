@@ -36,8 +36,8 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 from neo4j import Driver, GraphDatabase
 
-from graph.graph_vector_store import GraphVectorStore
-from graph.query_embedder import QueryEmbedder
+from src.graph.graph_vector_store import GraphVectorStore
+from src.graph.query_embedder import QueryEmbedder
 
 logger = logging.getLogger(__name__)
 

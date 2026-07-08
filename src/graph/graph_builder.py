@@ -13,8 +13,9 @@ GraphDocuments
         ↓
 Neo4j Aura
 """
-
 from __future__ import annotations
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+
 
 import logging
 import os
@@ -24,7 +25,7 @@ from dotenv import load_dotenv
 
 from langchain_core.documents import Document
 from langchain_experimental.graph_transformers import LLMGraphTransformer
-from langchain_groq import ChatGroq
+from langchain_ollama import ChatOllama
 from langchain_neo4j import Neo4jGraph
 
 from .graph_schema import get_transformer_kwargs
@@ -52,9 +53,9 @@ class KnowledgeGraphBuilder:
 
         logger.info("Loading Groq model...")
 
-        self.llm = ChatGroq(
-            model=model_name,
-            temperature=temperature,
+        self.llm = ChatOllama(
+        model="qwen3:8b",
+        temperature=0,
         )
 
         logger.info("Initializing Graph Transformer...")
@@ -63,7 +64,19 @@ class KnowledgeGraphBuilder:
             llm=self.llm,
             **get_transformer_kwargs(),
         )
-
+        self.graph_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=2500,
+        chunk_overlap=200,
+        separators=[
+        "\n\n",
+        "\n",
+        ". ",
+        "; ",
+        ", ",
+        " ",
+        "",
+        ],
+        )
     # ================================================================
     # Convert contracts to LangChain Documents
     # ================================================================
@@ -120,7 +133,10 @@ class KnowledgeGraphBuilder:
         graph_docs = self.transformer.convert_to_graph_documents(
             documents
         )
-
+        logger.info(
+        "Average chars: %.2f",
+        sum(len(c["text"]) for c in contracts) / len(contracts)
+        )
         logger.info(
             "Generated %d GraphDocuments.",
             len(graph_docs),
@@ -157,7 +173,7 @@ class KnowledgeGraphBuilder:
     def build(
         self,
         contracts: List[Dict[str, Any]],
-        batch_size: int = 5,
+        batch_size: int = 1,
     ):
 
         total = len(contracts)

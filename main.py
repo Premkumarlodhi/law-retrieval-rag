@@ -9,6 +9,10 @@ from src.cross_encoder import CrossEncoderReranker
 from evaluation.retrieval_eval import hit_rate, reciprocal_rank, recall_at_k
 from evaluation.test_queries import TEST_QUERIES
 from src.chunker import chunk_contracts
+from src.graph.graph_builder import KnowledgeGraphBuilder
+from src.graph.graph_embeddings import GraphEmbeddingGenerator
+from src.graph.graph_vector_store import GraphVectorStore
+from src.graph.graph_retriever import GraphRetriever
 from src.hybrid_retriever import HybridRetriever
 from src.parser import parse_cuad
 from src.retriever import BM25Retriever
@@ -26,7 +30,7 @@ class PipelineConfig:
     demo_query: str = "force majeure or act of god"
     top_k: int = 5
     eval_top_k: int = 5
-
+    rebuild_graph: bool = False
 
 class RetrievalPipeline:
     """Orchestrates the document ingestion, chunking, indexing, retrieval, and evaluation stages."""
@@ -39,6 +43,11 @@ class RetrievalPipeline:
         self.semantic_retriever: Optional[SemanticRetriever] = None
         self.hybrid_retriever: Optional[HybridRetriever] = None
         self.cross_encoder: Optional[CrossEncoderReranker] = None
+        self.graph_builder: Optional[KnowledgeGraphBuilder] = None
+        self.graph_embeddings: Optional[GraphEmbeddingGenerator] = None
+        self.graph_vector_store: Optional[GraphVectorStore] = None
+        self.graph_retriever: Optional[GraphRetriever] = None
+
     def run(self) -> Dict[str, Any]:
         start_time = time.time()
         logger.info("Initializing retrieval pipeline...")
@@ -54,7 +63,12 @@ class RetrievalPipeline:
             self.hybrid_retriever,
             self.cross_encoder,
         ) = self._build_retrieval_stage(chunked_corpus)
+        
+        self._initialize_graph()
 
+        if self.config.rebuild_graph:
+            self._build_graph_stage()
+        
         self._demo_query_stage(self.config.demo_query, self.config.top_k)
         evaluation_metrics = self._evaluate_stage(self.config.eval_top_k)
 
@@ -166,6 +180,23 @@ class RetrievalPipeline:
         top_k=top_k,
         debug=True,
         )
+        graph_context = self._graph_search(
+            query=query,
+            top_k=5,
+        )
+
+        logger.info("")
+        logger.info("=" * 80)
+        logger.info("GRAPH RETRIEVAL")
+        logger.info("=" * 80)
+
+        for node in graph_context:
+
+            logger.info(
+                "%s (%s)",
+                node["name"],
+                node["label"],
+            )
         self._print_results(results, title="Hybrid Retrieval Results")
 
     def _evaluate_stage(self, top_k: int) -> Dict[str, float]:
@@ -214,7 +245,53 @@ class RetrievalPipeline:
         logger.info("Average Recall@%d   : %.3f", top_k, metrics["avg_recall_at_k"])
         logger.info("Average MRR        : %.3f", metrics["avg_mrr"])
         return metrics
+    def _initialize_graph(self) -> None:
 
+        logger.info("Initializing Knowledge Graph...")
+
+        self.graph_builder = KnowledgeGraphBuilder()
+
+        self.graph_embeddings = GraphEmbeddingGenerator()
+
+        self.graph_vector_store = GraphVectorStore()
+
+        self.graph_retriever = GraphRetriever()
+    def _build_graph_stage(self) -> None:
+
+        logger.info("Building Knowledge Graph...")
+
+        if self.graph_builder is None:
+            raise RuntimeError("Graph Builder not initialized.")
+
+        if self.graph_embeddings is None:
+            raise RuntimeError("Graph Embeddings not initialized.")
+
+        if self.graph_vector_store is None:
+            raise RuntimeError("Graph Vector Store not initialized.")
+
+        self.graph_builder.build(
+            self.parsed_documents
+        )
+
+        self.graph_embeddings.build()
+
+        self.graph_vector_store.create_index()
+    def _graph_search(
+        self,
+        query: str,
+        top_k: int = 5,
+    ):
+
+        if self.graph_retriever is None:
+            raise RuntimeError(
+                "Graph Retriever not initialized."
+            )
+
+        return self.graph_retriever.retrieve(
+            query=query,
+            top_k=top_k,
+            max_hops=2,
+        )
     @staticmethod
     def _sanitize_metadata(metadata: Any) -> Any:
         if isinstance(metadata, dict):
@@ -267,6 +344,7 @@ def build_default_config() -> PipelineConfig:
         repository_root=repository_root,
         data_path=repository_root / "data" / "CUAD_v1.json",
         output_chunks_path=repository_root / "data" / "processed_chunks.json",
+        rebuild_graph=True, 
     )
 
 
