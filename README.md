@@ -5,25 +5,27 @@
 - Hybrid Retrieval combining BM25 and Dense Vector Search
 - Persistent ChromaDB semantic indexing
 - Reciprocal Rank Fusion (RRF)
+- Cross-Encoder reranking for query-document relevance scoring
+- Knowledge Graph retrieval over Neo4j with bounded multi-hop expansion
+- Local LLM generation via Ollama
 - Metadata-aware legal chunking
 - Modular retrieval architecture
 - Production-ready retrieval diagnostics
 - Automatic index validation and rebuilding
-- Extensible architecture for Cross-Encoder reranking and Knowledge Graph retrieval
+- Interactive Streamlit chat frontend
 
-| Category       | Technologies           |
-| -------------- | ---------------------- |
-| Language       | Python                 |
-| Framework      | LangChain              |
-| Embeddings     | MiniLM                 |
-| Vector DB      | ChromaDB               |
-| Lexical Search | BM25                   |
-| Ranking        | Reciprocal Rank Fusion |
-| Database       | PostgreSQL             |
-| ORM            | SQLAlchemy             |
-| Deep Learning  | PyTorch                |
-| LLM            | LLaMA-3 (Planned)      |
-
+| Category         | Technologies                              |
+| ----------------- | ------------------------------------------ |
+| Language          | Python                                     |
+| Framework         | LangChain                                  |
+| Embeddings        | MiniLM (`all-MiniLM-L6-v2`)                |
+| Vector DB         | ChromaDB                                   |
+| Lexical Search    | BM25                                       |
+| Ranking (stage 1) | Reciprocal Rank Fusion                     |
+| Ranking (stage 2) | Cross-Encoder (`ms-marco-MiniLM-L-6-v2`)   |
+| Knowledge Graph   | Neo4j (Cypher)                             |
+| LLM Serving       | Ollama (`qwen3:8b`)                        |
+| Frontend          | Streamlit                                  |
 
 <div align="center">
 
@@ -31,13 +33,15 @@
 ![LangChain](https://img.shields.io/badge/LangChain-RAG-green)
 ![ChromaDB](https://img.shields.io/badge/VectorDB-ChromaDB-orange)
 ![BM25](https://img.shields.io/badge/Retrieval-BM25-red)
-![PostgreSQL](https://img.shields.io/badge/Knowledge%20Graph-PostgreSQL-blue)
-![Llama-3](https://img.shields.io/badge/LLM-Llama--3-purple)
-![Status](https://img.shields.io/badge/Status-Under%20Development-success)
+![CrossEncoder](https://img.shields.io/badge/Reranking-Cross--Encoder-yellow)
+![Neo4j](https://img.shields.io/badge/Knowledge%20Graph-Neo4j-008cc1)
+![Ollama](https://img.shields.io/badge/LLM-Ollama%20Qwen3--8B-purple)
+![Streamlit](https://img.shields.io/badge/Frontend-Streamlit-ff4b4b)
+![Status](https://img.shields.io/badge/Status-Active-success)
 
 **A Production-Grade Hybrid Retrieval-Augmented Generation (RAG) System for Intelligent Legal Contract Analysis**
 
-Combining **Lexical Search**, **Semantic Search**, **Hybrid Ensemble Retrieval**, **Knowledge Graph Reasoning**, and **Large Language Models** to enable accurate, explainable, and citation-grounded legal document retrieval.
+Combining **Lexical Search**, **Semantic Search**, **Hybrid Ensemble Retrieval**, **Cross-Encoder Reranking**, **Knowledge Graph Reasoning**, and a **local Large Language Model** to enable accurate, explainable, and citation-grounded legal document retrieval — accessible through an interactive chat interface.
 
 </div>
 
@@ -49,9 +53,7 @@ Legal contracts contain highly specialized terminology, nested clause dependenci
 
 Conventional keyword search retrieves exact terms but cannot understand semantic meaning, while dense vector search captures semantic similarity but often fails on exact identifiers such as clause numbers, statutory references, and contract-specific terminology. Furthermore, neither approach can naturally reason across relationships between entities such as organizations, contracts, obligations, or legal disputes.
 
-This project addresses these limitations by building a **Hybrid Retrieval-Augmented Generation (RAG) System** that combines multiple retrieval paradigms into a unified production-oriented pipeline.
-
-Instead of relying on a single retriever, every user query is simultaneously processed by multiple retrieval engines, allowing the system to leverage the strengths of each retrieval strategy before generating a final context for downstream reasoning.
+This project addresses these limitations with a full retrieval-to-generation pipeline: every query passes through **hybrid lexical/semantic retrieval**, is refined by a **cross-encoder reranker**, is augmented with **knowledge-graph context from Neo4j**, and is finally answered by a **locally-served LLM (Ollama)** — all surfaced through a **Streamlit chat interface**.
 
 ---
 
@@ -108,23 +110,25 @@ Example:
 
 > Has Company A signed a licensing agreement with Company B that contains an indemnification clause?
 
-Answering such queries requires reasoning across interconnected entities rather than retrieving isolated document chunks.
+Answering such queries requires reasoning across interconnected entities rather than retrieving isolated document chunks. This is handled by the knowledge graph retrieval stage described below.
 
 ---
 
-# 💡 Proposed Solution
+# 💡 Solution Architecture
 
-This project implements a **Hybrid Ensemble Retrieval Pipeline** that combines sparse retrieval, dense retrieval, and structured graph reasoning into a single retrieval architecture.
+This project implements a **multi-stage retrieval and generation pipeline** that combines sparse retrieval, dense retrieval, cross-encoder reranking, and structured graph reasoning before handing grounded evidence to a local LLM.
 
-Each incoming query is routed through multiple retrieval systems in parallel.
+Each incoming query is processed as follows:
 
 - **BM25 Retriever** performs exact lexical matching for statutory references, contract identifiers, and legal terminology.
 - **Semantic Retriever** uses transformer embeddings and ChromaDB to capture contextual similarity beyond exact keywords.
 - **Hybrid Retriever** applies **Reciprocal Rank Fusion (RRF)** to merge sparse and dense retrieval results into a unified ranked candidate set.
-- **Knowledge Graph Retrieval** (under development) will enable entity-centric and multi-hop legal reasoning.
-- **LLaMA-3** (planned) will synthesize retrieved evidence into citation-backed legal responses.
+- **Cross-Encoder Reranker** rescores the fused candidates with full query-document attention, producing the final top-k clauses.
+- **Graph Retriever** independently embeds the query, seeds a Neo4j vector search, and expands the local graph neighborhood (bounded BFS) to surface related entities and relationships.
+- **Ollama (`qwen3:8b`)** synthesizes the reranked clauses and graph context into a citation-grounded legal answer, refusing to speculate when evidence is insufficient.
+- **Streamlit** provides a ChatGPT-style interface for asking questions and viewing answers, while full retrieval diagnostics are logged to the terminal.
 
-This layered retrieval architecture significantly improves recall, precision, explainability, and robustness compared to traditional single-retriever RAG systems.
+This layered architecture significantly improves recall, precision, explainability, and robustness compared to traditional single-retriever RAG systems.
 
 ---
 
@@ -136,10 +140,15 @@ This layered retrieval architecture significantly improves recall, precision, ex
 - ✅ Transformer-based semantic retrieval using MiniLM embeddings
 - ✅ Persistent ChromaDB vector indexing
 - ✅ Hybrid Retrieval using Reciprocal Rank Fusion (RRF)
+- ✅ Cross-Encoder reranking (`cross-encoder/ms-marco-MiniLM-L-6-v2`)
+- ✅ Knowledge Graph retrieval over Neo4j with bounded multi-hop expansion
+- ✅ Query embedding and Neo4j vector-index search for graph seeding
+- ✅ Local LLM answer generation via Ollama (`qwen3:8b`, temperature 0)
+- ✅ Interactive Streamlit chat frontend with conversation history
 - ✅ Retrieval diagnostics and debugging utilities
 - ✅ Automatic vector index validation and rebuilding
+- ✅ Graceful degradation when Neo4j or Ollama is unavailable
 - ✅ Modular retrieval pipeline with interchangeable components
-- ✅ Groundwork for Cross-Encoder reranking and Knowledge Graph retrieval
 
 ---
 
@@ -150,27 +159,27 @@ The retrieval pipeline follows a modular architecture where each component is re
 ```mermaid
 flowchart TD
 
-    A[User Query]
-
-    A --> B[BM25 Retriever]
-
+    A[User Query] --> B[BM25 Retriever]
     A --> C[Semantic Retriever]
 
-    A --> D[Knowledge Graph Retriever]
-
     B --> E[Reciprocal Rank Fusion]
-
     C --> E
 
-    D --> E
+    E --> F[Cross-Encoder Reranker]
+    F --> G[Top-k Reranked Clauses]
 
-    E --> F[Cross Encoder Reranker]
+    A --> D[Graph Retriever]
+    D --> D1[Query Embedder]
+    D1 --> D2[Neo4j Vector Search - Seed Nodes]
+    D2 --> D3[Bounded Cypher Expansion]
+    D3 --> H[Graph Context]
 
-    F --> G[Context Builder]
+    G --> I[Merged Context]
+    H --> I
 
-    G --> H[Llama-3 Generator]
-
-    H --> I[Citation-backed Legal Response]
+    I --> J[Ollama qwen3:8b]
+    J --> K[Citation-grounded Legal Answer]
+    K --> L[Streamlit Chat UI]
 ```
 
 The current implementation includes:
@@ -178,16 +187,19 @@ The current implementation includes:
 - ✅ BM25 Sparse Retrieval
 - ✅ Semantic Retrieval using ChromaDB
 - ✅ Reciprocal Rank Fusion (RRF)
-- ⏳ Cross-Encoder Reranking
-- ⏳ Knowledge Graph Retrieval
-- ⏳ LangChain Orchestration
-- ⏳ Fine-tuned LLaMA-3 Generation
+- ✅ Cross-Encoder Reranking
+- ✅ Knowledge Graph Retrieval (Neo4j)
+- ✅ Ollama LLM Generation
+- ✅ Streamlit Frontend
+- ⏳ Retrieval evaluation / benchmarking suite (in progress)
 
 ---
 
-# ⚙️ End-to-End Retrieval Pipeline
+# ⚙️ End-to-End Pipeline
 
-The system converts raw legal contracts into a searchable retrieval corpus through several independent processing stages.
+The system converts raw legal contracts into a searchable retrieval corpus, then serves queries through the full retrieval-to-generation pipeline.
+
+**Offline (already built, not re-run by the frontend):**
 
 ```text
                            CUAD Dataset
@@ -204,27 +216,36 @@ The system converts raw legal contracts into a searchable retrieval corpus throu
               ┌─────────────────┴─────────────────┐
               ▼                                   ▼
       BM25 Inverted Index                 ChromaDB Vector Index
-              │                                   │
-              ▼                                   ▼
-      Sparse Retrieval                  Dense Semantic Retrieval
-              └──────────────┬────────────────────┘
-                             ▼
-                Reciprocal Rank Fusion (RRF)
-                             ▼
-               Hybrid Candidate Document Set
-                             ▼
-              Cross Encoder Reranker (Planned)
-                             ▼
-                  Top-k Context Selection
-                             ▼
-              Knowledge Graph Augmentation
-                             ▼
-               Fine-tuned LLaMA-3 Generator
-                             ▼
-             Citation-backed Legal Response
+                                                    │
+                                                    ▼
+                                    Knowledge Graph (Neo4j) + Graph Embeddings
 ```
 
-The retrieval layer has been intentionally designed as a collection of interchangeable modules rather than a monolithic pipeline. This allows future retrieval engines—such as graph retrieval, metadata filtering, or adaptive query routing—to be integrated without changing the existing retrievers.
+**Online (per query, served by the Streamlit app):**
+
+```text
+                              User Query
+                                   │
+                 ┌─────────────────┴─────────────────┐
+                 ▼                                   ▼
+         Hybrid Retrieval                     Graph Retrieval
+   (BM25 + Semantic → RRF)             (Query Embed → Vector Seed
+                 │                       → Bounded Cypher Expansion)
+                 ▼                                   │
+        Cross-Encoder Rerank                         │
+                 │                                   │
+                 └───────────────┬───────────────────┘
+                                 ▼
+                         Merged Context
+                                 ▼
+                        Ollama (qwen3:8b)
+                                 ▼
+                Citation-grounded Legal Response
+                                 ▼
+                       Streamlit Chat UI
+```
+
+The retrieval layer has been intentionally designed as a collection of interchangeable modules rather than a monolithic pipeline. This allows future retrieval engines—such as metadata filtering or adaptive query routing—to be integrated without changing the existing retrievers.
 
 ---
 
@@ -316,7 +337,7 @@ Each generated chunk stores:
 - Metadata
 - Chunk Text
 
-This metadata later becomes available to both lexical and semantic retrieval engines.
+This metadata later becomes available to every downstream retrieval, reranking, and graph module.
 
 ---
 
@@ -479,11 +500,9 @@ For a document ranked at position *r*, the RRF score is computed as
 \text{RRF}(r)=\frac{1}{k+r}
 \]
 
-where *k* is a ranking constant controlling the influence of lower-ranked documents.
+where *k* is a ranking constant (default `60`) controlling the influence of lower-ranked documents.
 
-The final hybrid score is obtained by summing contributions from every retrieval engine.
-
-This allows documents retrieved by multiple independent retrievers to naturally rise toward the top of the ranking.
+The final hybrid score is obtained by summing contributions from every retrieval engine, so documents retrieved by multiple independent retrievers naturally rise toward the top of the ranking.
 
 ### Hybrid Retrieval Pipeline
 
@@ -492,11 +511,11 @@ User Query
 
 ↓
 
-BM25 Top-20
+BM25 Top-N
 
 +
 
-Semantic Top-20
+Semantic Top-N
 
 ↓
 
@@ -508,94 +527,162 @@ Hybrid Candidate Set
 
 ↓
 
-Top-k Results
+Top-k Results → Cross-Encoder Reranker
 ```
 
----
+### Hybrid Candidate Schema
 
-## Hybrid Candidate Schema
-
-Every candidate returned by the Hybrid Retriever contains a unified schema.
+Every candidate returned by the Hybrid Retriever contains a unified schema:
 
 ```text
 Document ID
-
 Chunk ID
-
 Contract Title
-
 Contract Type
-
 Chunk Text
-
 BM25 Rank
-
 Semantic Rank
-
 BM25 Score
-
 Semantic Similarity
-
 Semantic Distance
-
 Hybrid Score
-
 Retrieval Sources
 ```
 
 This schema provides a common interface for every downstream module including reranking, graph retrieval, and LLM generation.
 
+### Retrieval Source Tracking
+
+Each retrieved document tracks which retrieval engines contributed to its selection, e.g. `["bm25"]`, `["semantic"]`, or `["bm25", "semantic"]`. This allows the pipeline to identify documents retrieved only lexically, only semantically, or by both engines — useful for debugging, benchmarking, and future retrieval strategies.
+
 ---
 
-## Retrieval Source Tracking
+## 6. Cross-Encoder Reranking
 
-Each retrieved document tracks which retrieval engines contributed to its selection.
-
-Examples include
+**File**
 
 ```text
-["bm25"]
-
-["semantic"]
-
-["bm25", "semantic"]
+src/cross_encoder.py
 ```
 
-This allows the pipeline to identify
+Reciprocal Rank Fusion produces a strong candidate set, but it never lets the query and document interact directly. The **Cross-Encoder Reranker** closes this gap by scoring every `(query, chunk_text)` pair jointly using **`cross-encoder/ms-marco-MiniLM-L-6-v2`**, which captures fine-grained relevance signals that independent bi-encoder and BM25 scores miss.
 
-- documents retrieved only lexically
-- documents retrieved only semantically
-- overlapping candidates retrieved by multiple engines
+```text
+Hybrid Candidates (RRF)
 
-This information is useful for debugging, benchmarking, and future retrieval strategies.
+↓
+
+Cross-Encoder(query, chunk_text) — batched inference
+
+↓
+
+cross_score + rerank_position per candidate
+
+↓
+
+Sorted by cross_score (ties broken by hybrid_score, similarity, chunk_id)
+
+↓
+
+Top-k Reranked Clauses
+```
+
+Each reranked result preserves the original hybrid metadata (BM25 rank, semantic rank, retrieval sources) alongside the new `cross_score` and `rerank_position`, so the full ranking history of a chunk remains inspectable end-to-end.
+
+---
+
+## 7. Knowledge Graph Retrieval
+
+**Files**
+
+```text
+src/graph/graph_retriever.py
+src/graph/graph_vector_store.py
+src/graph/query_embedder.py
+```
+
+The Graph Retriever is a pure orchestration layer over **Neo4j** that answers the relational questions BM25, semantic, and hybrid retrieval cannot: reasoning across entities such as organizations, contracts, obligations, and clause relationships.
+
+```text
+Query
+
+↓
+
+QueryEmbedder.embed()
+
+↓
+
+GraphVectorStore.vector_search() — nearest graph nodes (seed set)
+
+↓
+
+Bounded BFS Cypher Expansion (max_hops, per-node neighbor cap)
+
+↓
+
+Deduplicated connections per seed node
+
+↓
+
+Formatted graph context: {node_id, label, name, score, properties, connections}
+```
+
+Design characteristics:
+
+- All Cypher lives in parameterized query templates — never generated by an LLM.
+- A single shared `visited` set prevents re-expansion and cycles across all seed nodes and hops.
+- Embedding vectors are stripped from every returned node before being handed to the LLM context builder.
+- Every Neo4j read goes through one exception-safe execution helper, so a single failed traversal step degrades gracefully instead of crashing the request.
+- If Neo4j credentials are not configured or the database is unreachable, the application continues running on hybrid retrieval + reranking alone.
+
+---
+
+## 8. Generation Layer (Ollama)
+
+Retrieved clauses (post-rerank) and graph context are merged into a single grounded prompt and passed to a locally-served LLM via **Ollama**, using the **`qwen3:8b`** model at **temperature 0** for deterministic, low-hallucination output.
+
+The generation prompt instructs the model to:
+
+- Use only the retrieved evidence — never outside knowledge
+- Explicitly say so when evidence is insufficient, rather than guessing
+- Reference clause titles/sections where relevant
+
+If Ollama is not running, the application reports this clearly instead of failing silently or crashing.
+
+---
+
+## 9. Streamlit Frontend
+
+**File**
+
+```text
+streamlit_app.py
+```
+
+A ChatGPT-style Streamlit interface sits on top of the existing retrieval pipeline as a pure presentation layer — it does not reimplement or duplicate any retrieval, reranking, or graph logic.
+
+- Dark theme, centered chat layout
+- `st.chat_input()` conversation loop with persisted history via `st.session_state`
+- "Clear Chat" control
+- All components (BM25, Semantic, Hybrid, Cross-Encoder, Graph Retriever, LLM) are initialized exactly once per server process via `st.cache_resource`
+- Full retrieval diagnostics (question, hybrid results, graph results, merged context, prompt, answer, stage timings) are printed to the terminal; the chat UI itself shows only the question and final answer
+- Graceful degradation: the app keeps running (with a visible warning) if Neo4j or Ollama is unavailable at startup
 
 ---
 
 # 📊 Retrieval Diagnostics
 
-To simplify debugging and retrieval analysis, the Hybrid Retriever includes built-in diagnostic utilities.
+To simplify debugging and retrieval analysis, the Hybrid Retriever, Cross-Encoder Reranker, and Graph Retriever all include built-in diagnostic logging.
 
-When enabled, the pipeline reports
+When enabled, the pipeline reports:
 
-- Total BM25 candidates
-- Total Semantic candidates
-- Candidate overlap
-- BM25-only candidates
-- Semantic-only candidates
-- Total fused candidates
+- Total BM25 / Semantic candidates and their overlap
+- Hybrid score, BM25 rank, semantic rank, and retrieval sources per candidate
+- Cross-encoder score and rerank position per candidate
+- Number of graph seed nodes and expanded connections
+- Per-stage timings (hybrid retrieval, reranking, graph retrieval, LLM generation, total)
 
-Additionally, every final candidate can display
-
-- Hybrid Score
-- BM25 Rank
-- Semantic Rank
-- Semantic Similarity
-- Embedding Distance
-- Retrieval Sources
-- Contract Title
-- Chunk Identifier
-
-These diagnostics proved particularly useful during development to identify stale vector indexes, metadata inconsistencies, and retrieval overlap issues.
+These diagnostics have proven useful for identifying stale vector indexes, metadata inconsistencies, retrieval overlap issues, and slow pipeline stages.
 
 ---
 
@@ -629,14 +716,37 @@ using established evaluation frameworks such as **RAGAS** and **DeepEval**.
 
 ---
 
-# 🚀 Why Hybrid Retrieval?
+# 🚀 Why This Architecture?
 
-Instead of relying exclusively on dense retrieval, this project combines complementary retrieval paradigms.
+Instead of relying on a single retrieval or ranking method, this project layers complementary techniques so each compensates for the others' weaknesses.
 
-| Retrieval Method | Strength | Weakness |
-|------------------|----------|----------|
-| BM25 | Exact legal terminology, statute numbers, clause references | Cannot understand semantics |
-| Dense Retrieval | Semantic similarity and paraphrase understanding | Poor at exact identifiers |
-| Hybrid Retrieval | Combines lexical precision and semantic understanding | Slightly higher computational cost |
+| Stage             | Strength                                                   | Weakness                              |
+| ------------------ | ----------------------------------------------------------- | -------------------------------------- |
+| BM25               | Exact legal terminology, statute numbers, clause references | Cannot understand semantics            |
+| Dense Retrieval    | Semantic similarity and paraphrase understanding             | Poor at exact identifiers              |
+| Hybrid (RRF)       | Combines lexical precision and semantic understanding        | Slightly higher computational cost     |
+| Cross-Encoder      | Fine-grained query-document relevance via joint attention     | More expensive than bi-encoder scoring |
+| Knowledge Graph    | Multi-hop relational reasoning across entities                | Requires a populated, maintained graph |
+| Local LLM (Ollama) | Private, citation-grounded synthesis with no external API    | Bounded by local model capability      |
 
-This hybrid architecture provides significantly better retrieval quality than either individual retriever while remaining modular and extensible for future enhancements.
+This layered architecture provides significantly better retrieval and answer quality than any individual component while remaining modular and extensible for future enhancements.
+
+---
+
+# ▶️ Running the App
+
+```bash
+streamlit run streamlit_app.py
+```
+
+Configuration is read from environment variables (a `.env` file is picked up automatically if present):
+
+| Variable                 | Purpose                                              | Default                  |
+| ------------------------- | ------------------------------------------------------ | -------------------------- |
+| `PROCESSED_CHUNKS_PATH`   | Path to the pre-built processed corpus                | `processed_chunks.json`  |
+| `OLLAMA_MODEL`            | Ollama model used for generation                       | `qwen3:8b`                |
+| `NEO4J_URI`               | Neo4j Bolt URI                                          | —                          |
+| `NEO4J_USERNAME`          | Neo4j username                                          | —                          |
+| `NEO4J_PASSWORD`          | Neo4j password                                          | —                          |
+
+If Neo4j or Ollama are not configured, the app still starts and serves answers from hybrid retrieval and cross-encoder reranking alone, with a warning shown in the UI.
