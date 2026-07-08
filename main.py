@@ -344,7 +344,7 @@ def build_default_config() -> PipelineConfig:
         repository_root=repository_root,
         data_path=repository_root / "data" / "CUAD_v1.json",
         output_chunks_path=repository_root / "data" / "processed_chunks.json",
-        rebuild_graph=True, 
+        rebuild_graph=False, 
     )
 
 

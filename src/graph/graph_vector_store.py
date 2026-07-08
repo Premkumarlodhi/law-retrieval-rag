@@ -1,21 +1,9 @@
 """
 graph_vector_store.py
 
-Neo4j Vector Store
+Simple Neo4j Vector Store
 
-Responsibilities
-----------------
-1. Connect to Neo4j Aura
-2. Create vector index
-3. Delete vector index
-4. Check index existence
-5. Perform vector similarity search
-
-This module does NOT
-
-- generate embeddings
-- build graphs
-- retrieve graph neighborhoods
+Indexes only Document nodes.
 """
 
 from __future__ import annotations
@@ -36,7 +24,7 @@ class GraphVectorStore:
 
     def __init__(
         self,
-        index_name: str = "legal_graph_index",
+        index_name: str = "document_vector_index",
         embedding_dimension: int = 384,
     ) -> None:
 
@@ -70,20 +58,18 @@ class GraphVectorStore:
         )
 
     # ==========================================================
-    # Check if vector index exists
+    # Check Index
     # ==========================================================
 
     def index_exists(self) -> bool:
 
-        query = """
-        SHOW VECTOR INDEXES
-        YIELD name
-        WHERE name = $name
-        RETURN name
-        """
-
         result = self.run_query(
-            query,
+            """
+            SHOW VECTOR INDEXES
+            YIELD name
+            WHERE name=$name
+            RETURN name
+            """,
             {
                 "name": self.index_name,
             },
@@ -92,7 +78,7 @@ class GraphVectorStore:
         return len(result) > 0
 
     # ==========================================================
-    # Create Vector Index
+    # Create Index
     # ==========================================================
 
     def create_index(self) -> None:
@@ -106,13 +92,12 @@ class GraphVectorStore:
             return
 
         logger.info(
-            "Creating vector index..."
+            "Creating Document vector index..."
         )
 
         query = f"""
         CREATE VECTOR INDEX {self.index_name}
-        IF NOT EXISTS
-        FOR (n)
+        FOR (n:Document)
         ON (n.embedding)
         OPTIONS {{
             indexConfig: {{
@@ -129,28 +114,17 @@ class GraphVectorStore:
         )
 
     # ==========================================================
-    # Drop Vector Index
+    # Drop Index
     # ==========================================================
 
     def drop_index(self) -> None:
 
         if not self.index_exists():
-
-            logger.info(
-                "Vector index does not exist."
-            )
-
             return
 
-        logger.info(
-            "Dropping vector index..."
+        self.run_query(
+            f"DROP INDEX {self.index_name}"
         )
-
-        query = f"""
-        DROP INDEX {self.index_name}
-        """
-
-        self.run_query(query)
 
         logger.info(
             "Vector index removed."
@@ -163,7 +137,7 @@ class GraphVectorStore:
     def vector_search(
         self,
         embedding: List[float],
-        top_k: int = 10,
+        top_k: int = 5,
     ) -> List[Dict]:
 
         query = """

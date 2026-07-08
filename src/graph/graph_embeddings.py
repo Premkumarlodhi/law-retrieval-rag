@@ -2,20 +2,6 @@
 graph_embeddings.py
 
 Generates vector embeddings for Neo4j graph nodes.
-
-Responsibilities
-----------------
-1. Connect to Neo4j Aura
-2. Load SentenceTransformer
-3. Read graph nodes
-4. Generate embeddings
-5. Store embeddings back into Neo4j
-
-This module does NOT
-
-- build graphs
-- retrieve graphs
-- execute GraphRAG queries
 """
 
 from __future__ import annotations
@@ -34,9 +20,6 @@ logger = logging.getLogger(__name__)
 
 
 class GraphEmbeddingGenerator:
-    """
-    Generates embeddings for every node in Neo4j.
-    """
 
     def __init__(
         self,
@@ -60,51 +43,79 @@ class GraphEmbeddingGenerator:
     # ============================================================
 
     def get_nodes(self) -> List[Dict[str, Any]]:
-        """
-        Fetch every node that has a 'name' property.
-        """
 
         query = """
         MATCH (n)
-        WHERE exists(n.name)
         RETURN
             elementId(n) AS id,
             labels(n) AS labels,
             properties(n) AS properties
         """
 
-        return self.graph.query(query)
+        nodes = self.graph.query(query)
+
+        logger.info(
+            "Found %d graph nodes.",
+            len(nodes),
+        )
+
+        return nodes
 
     # ============================================================
     # Build Embedding Text
     # ============================================================
 
     @staticmethod
-    def build_text(node: Dict[str, Any]) -> str:
-        """
-        Converts a node into semantic text.
-        """
+    def build_text(
+        node: Dict[str, Any],
+    ) -> str:
 
         props = node["properties"]
+        labels = node["labels"]
 
         parts = []
 
-        labels = node.get("labels", [])
-
         if labels:
-            parts.append(f"Type: {labels[0]}")
+            parts.append(f"Label: {labels[0]}")
 
         if props.get("name"):
             parts.append(f"Name: {props['name']}")
 
-        if props.get("description"):
-            parts.append(f"Description: {props['description']}")
+        if props.get("title"):
+            parts.append(f"Title: {props['title']}")
 
         if props.get("contract_type"):
-            parts.append(f"Contract Type: {props['contract_type']}")
+            parts.append(
+                f"Contract Type: {props['contract_type']}"
+            )
+
+        if props.get("type"):
+            parts.append(
+                f"Type: {props['type']}"
+            )
+
+        if props.get("date"):
+            parts.append(
+                f"Date: {props['date']}"
+            )
 
         if props.get("section"):
-            parts.append(f"Section: {props['section']}")
+            parts.append(
+                f"Section: {props['section']}"
+            )
+
+        if props.get("description"):
+            parts.append(
+                props["description"]
+            )
+
+        if props.get("text"):
+            parts.append(
+                props["text"][:3000]
+            )
+
+        if not parts:
+            parts.append(str(props))
 
         return "\n".join(parts)
 
@@ -112,7 +123,10 @@ class GraphEmbeddingGenerator:
     # Generate Embedding
     # ============================================================
 
-    def embed(self, text: str) -> List[float]:
+    def embed(
+        self,
+        text: str,
+    ) -> List[float]:
 
         return self.model.encode(
             text,
@@ -137,10 +151,8 @@ class GraphEmbeddingGenerator:
 
         self.graph.query(
             query,
-            params={
-                "id": node_id,
-                "embedding": embedding,
-            },
+            id=node_id,
+            embedding=embedding,
         )
 
     # ============================================================
@@ -151,16 +163,32 @@ class GraphEmbeddingGenerator:
 
         nodes = self.get_nodes()
 
+        if not nodes:
+
+            logger.warning(
+                "No graph nodes found."
+            )
+
+            return
+
         logger.info(
             "Generating embeddings for %d nodes...",
             len(nodes),
         )
 
-        for idx, node in enumerate(nodes, start=1):
+        embedded = 0
+
+        for idx, node in enumerate(
+            nodes,
+            start=1,
+        ):
 
             try:
 
                 text = self.build_text(node)
+
+                if not text.strip():
+                    continue
 
                 embedding = self.embed(text)
 
@@ -169,7 +197,9 @@ class GraphEmbeddingGenerator:
                     embedding,
                 )
 
-                if idx % 50 == 0:
+                embedded += 1
+
+                if idx % 25 == 0:
 
                     logger.info(
                         "Embedded %d/%d nodes",
@@ -177,14 +207,15 @@ class GraphEmbeddingGenerator:
                         len(nodes),
                     )
 
-            except Exception as e:
+            except Exception:
 
                 logger.exception(
-                    "Failed embedding node %s : %s",
+                    "Failed embedding node %s",
                     node["id"],
-                    str(e),
                 )
 
         logger.info(
-            "Finished generating graph embeddings."
+            "Successfully embedded %d/%d nodes.",
+            embedded,
+            len(nodes),
         )
