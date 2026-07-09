@@ -17,8 +17,29 @@ from src.hybrid_retriever import HybridRetriever
 from src.parser import parse_cuad
 from src.retriever import BM25Retriever
 from src.semantic_retriever import SemanticRetriever
+from langchain_ollama import ChatOllama
 import time
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
+MILLISECONDS_PER_SECOND = 1000.0
+
+OLLAMA_MODEL_NAME = "qwen3:8b"
+OLLAMA_TEMPERATURE = 0
+
+PROMPT_SECTION_BAR = "=" * 52
+
+SYSTEM_PROMPT_INSTRUCTIONS = (
+    "You are an expert legal assistant.\n\n"
+    "Answer ONLY using the supplied retrieved context.\n\n"
+    "Never fabricate information.\n\n"
+    "If the answer is not present in the context, say:\n"
+    "\"The provided documents do not contain enough information.\"\n\n"
+    "Quote relevant clauses whenever possible."
+)
 
 
 @dataclass(frozen=True)
@@ -47,6 +68,7 @@ class RetrievalPipeline:
         self.graph_embeddings: Optional[GraphEmbeddingGenerator] = None
         self.graph_vector_store: Optional[GraphVectorStore] = None
         self.graph_retriever: Optional[GraphRetriever] = None
+        self.llm: Optional[ChatOllama] = None
     def _time_stage(
         self,
         stage_name: str,
@@ -114,6 +136,11 @@ class RetrievalPipeline:
             self._initialize_graph,
         )
 
+        self._time_stage(
+            "LLM Initialization",
+            self._initialize_llm,
+        )
+
         if self.config.rebuild_graph:
 
             self._time_stage(
@@ -121,7 +148,7 @@ class RetrievalPipeline:
                 self._build_graph_stage,
             )
 
-        self._time_stage(
+        query_timings = self._time_stage(
             "Demo Query",
             self._demo_query_stage,
             self.config.demo_query,
@@ -133,11 +160,18 @@ class RetrievalPipeline:
             self._evaluate_stage,
             self.config.eval_top_k,
         )
+
+        if query_timings:
+            evaluation_metrics["query_latency_ms"] = query_timings["end_to_end_query_ms"]
+
+        total_pipeline_seconds = time.perf_counter() - pipeline_start
+        self._print_query_latency_summary(query_timings, total_pipeline_seconds)
+
         return {
             "documents": self.parsed_documents,
             "chunks": self.chunked_corpus,
             "evaluation": evaluation_metrics,
-            "elapsed_seconds": time.perf_counter() - pipeline_start,
+            "elapsed_seconds": total_pipeline_seconds,
         }
 
     def _parse_stage(self) -> List[Dict[str, Any]]:
@@ -220,10 +254,12 @@ class RetrievalPipeline:
         cross_encoder,
         )
 
-    def _demo_query_stage(self, query: str, top_k: int) -> None:
+    def _demo_query_stage(self, query: str, top_k: int) -> Dict[str, float]:
         logger.info("Executing demo query: %s", query)
         if self.hybrid_retriever is None:
             raise RuntimeError("Hybrid retriever has not been initialized.")
+
+        query_start = time.perf_counter()
 
         start = time.perf_counter()
 
@@ -232,10 +268,7 @@ class RetrievalPipeline:
             top_k=max(top_k * 4, 20),
         )
 
-        logger.info(
-            "Hybrid Retrieval           : %.3f s",
-            time.perf_counter() - start,
-        )
+        hybrid_retrieval_ms = (time.perf_counter() - start) * MILLISECONDS_PER_SECOND
 
         start = time.perf_counter()
 
@@ -246,10 +279,8 @@ class RetrievalPipeline:
             debug=True,
         )
 
-        logger.info(
-            "Cross Encoder              : %.3f s",
-            time.perf_counter() - start,
-        )
+        cross_encoder_ms = (time.perf_counter() - start) * MILLISECONDS_PER_SECOND
+
         start = time.perf_counter()
 
         graph_context = self._graph_search(
@@ -257,10 +288,7 @@ class RetrievalPipeline:
             top_k=5,
         )
 
-        logger.info(
-            "Graph Retrieval            : %.3f s",
-            time.perf_counter() - start,
-        )
+        graph_retrieval_ms = (time.perf_counter() - start) * MILLISECONDS_PER_SECOND
 
         logger.info("")
         logger.info("=" * 80)
@@ -275,6 +303,25 @@ class RetrievalPipeline:
                 node["label"],
             )
         self._print_results(results, title="Hybrid Retrieval Results")
+
+        start = time.perf_counter()
+        prompt = self._build_prompt(query, results, graph_context)
+        prompt_construction_ms = (time.perf_counter() - start) * MILLISECONDS_PER_SECOND
+
+        start = time.perf_counter()
+        self._invoke_llm(prompt)
+        llm_generation_ms = (time.perf_counter() - start) * MILLISECONDS_PER_SECOND
+
+        end_to_end_query_ms = (time.perf_counter() - query_start) * MILLISECONDS_PER_SECOND
+
+        return {
+            "hybrid_retrieval_ms": hybrid_retrieval_ms,
+            "cross_encoder_ms": cross_encoder_ms,
+            "graph_retrieval_ms": graph_retrieval_ms,
+            "prompt_construction_ms": prompt_construction_ms,
+            "llm_generation_ms": llm_generation_ms,
+            "end_to_end_query_ms": end_to_end_query_ms,
+        }
 
     def _evaluate_stage(self, top_k: int) -> Dict[str, float]:
         logger.info("Running retrieval evaluation...")
@@ -333,6 +380,16 @@ class RetrievalPipeline:
         self.graph_vector_store = GraphVectorStore()
 
         self.graph_retriever = GraphRetriever()
+
+    def _initialize_llm(self) -> None:
+        """Instantiate the local Ollama chat model exactly once for reuse across queries."""
+        logger.info("Initializing local LLM (Ollama)...")
+
+        self.llm = ChatOllama(
+            model=OLLAMA_MODEL_NAME,
+            temperature=OLLAMA_TEMPERATURE,
+        )
+
     def _build_graph_stage(self) -> None:
 
         logger.info("Building Knowledge Graph...")
@@ -369,6 +426,155 @@ class RetrievalPipeline:
             top_k=top_k,
             max_hops=2,
         )
+
+    @staticmethod
+    def _build_prompt(
+        query: str,
+        retrieved_documents: List[Dict[str, Any]],
+        graph_context: List[Dict[str, Any]],
+    ) -> str:
+        """Construct the final LLM prompt from retrieval and graph evidence.
+
+        Parameters
+        ----------
+        query : str
+            The user's natural language question.
+        retrieved_documents : list of dict
+            Reranked hybrid retrieval results, each with ``title``,
+            ``contract_type``, and ``text`` keys.
+        graph_context : list of dict
+            Graph retrieval nodes, each with ``label`` and ``name`` keys.
+
+        Returns
+        -------
+        str
+            The complete prompt to send to the LLM.
+        """
+        document_blocks = []
+        for index, document in enumerate(retrieved_documents, start=1):
+            document_blocks.append(
+                f"[Document {index}]\n"
+                f"Title          : {document.get('title')}\n"
+                f"Contract Type  : {document.get('contract_type')}\n"
+                f"Text           : {document.get('text', '')}"
+            )
+        documents_section = (
+            "\n\n".join(document_blocks)
+            if document_blocks
+            else "No documents retrieved."
+        )
+
+        graph_blocks = [
+            f"{node.get('label')}: {node.get('name')}" for node in graph_context
+        ]
+        graph_section = "\n".join(graph_blocks) if graph_blocks else "No graph context retrieved."
+
+        return (
+            f"{SYSTEM_PROMPT_INSTRUCTIONS}\n\n"
+            f"=== RETRIEVED DOCUMENTS ===\n{documents_section}\n\n"
+            f"=== GRAPH CONTEXT ===\n{graph_section}\n\n"
+            f"=== QUESTION ===\n{query}\n\n"
+            f"=== FINAL ANSWER ===\n"
+        )
+
+    def _invoke_llm(self, prompt: str) -> str:
+        """Send a constructed prompt to the local Ollama model and return its answer.
+
+        Prints the full prompt and the model's answer to the console for
+        debugging, as required.
+
+        Parameters
+        ----------
+        prompt : str
+            The complete prompt produced by ``_build_prompt``.
+
+        Returns
+        -------
+        str
+            The LLM's answer text.
+        """
+        if self.llm is None:
+            raise RuntimeError("LLM has not been initialized.")
+
+        logger.info("")
+        logger.info(PROMPT_SECTION_BAR)
+        logger.info("LLM PROMPT")
+        logger.info(PROMPT_SECTION_BAR)
+        logger.info("")
+        logger.info("%s", prompt)
+
+        response = self.llm.invoke(prompt)
+        answer = response.content
+
+        logger.info("")
+        logger.info(PROMPT_SECTION_BAR)
+        logger.info("LLM ANSWER")
+        logger.info(PROMPT_SECTION_BAR)
+        logger.info("")
+        logger.info("%s", answer)
+
+        return answer
+
+    def _llm_stage(
+        self,
+        query: str,
+        retrieved_docs: List[Dict[str, Any]],
+        graph_context: List[Dict[str, Any]],
+    ) -> str:
+        """Build the prompt, invoke the local LLM, and return its answer.
+
+        This is the single orchestration entry point for LLM answer
+        generation: it composes ``_build_prompt`` and ``_invoke_llm`` and
+        contains no retrieval logic of its own.
+
+        Parameters
+        ----------
+        query : str
+            The user's natural language question.
+        retrieved_docs : list of dict
+            Reranked hybrid retrieval results.
+        graph_context : list of dict
+            Graph retrieval nodes.
+
+        Returns
+        -------
+        str
+            The LLM's answer text.
+        """
+        prompt = self._build_prompt(query, retrieved_docs, graph_context)
+        return self._invoke_llm(prompt)
+
+    def _print_query_latency_summary(
+        self,
+        query_timings: Optional[Dict[str, float]],
+        total_pipeline_seconds: float,
+    ) -> None:
+        """Print the final query-latency breakdown and total pipeline runtime.
+
+        Parameters
+        ----------
+        query_timings : dict or None
+            Per-stage millisecond timings produced by ``_demo_query_stage``.
+        total_pipeline_seconds : float
+            Total wall-clock runtime of the full pipeline, in seconds.
+        """
+        logger.info("")
+        logger.info(PROMPT_SECTION_BAR)
+        logger.info("QUERY LATENCY SUMMARY")
+        logger.info(PROMPT_SECTION_BAR)
+
+        if not query_timings:
+            logger.info("No demo query timings were recorded.")
+        else:
+            logger.info("Hybrid Retrieval      : %.2f ms", query_timings["hybrid_retrieval_ms"])
+            logger.info("Cross Encoder         : %.2f ms", query_timings["cross_encoder_ms"])
+            logger.info("Graph Retrieval       : %.2f ms", query_timings["graph_retrieval_ms"])
+            logger.info("Prompt Construction   : %.2f ms", query_timings["prompt_construction_ms"])
+            logger.info("LLM Generation        : %.2f ms", query_timings["llm_generation_ms"])
+            logger.info("End-to-End Query      : %.2f ms", query_timings["end_to_end_query_ms"])
+
+        logger.info("Total Pipeline        : %.2f s", total_pipeline_seconds)
+
     @staticmethod
     def _sanitize_metadata(metadata: Any) -> Any:
         if isinstance(metadata, dict):
